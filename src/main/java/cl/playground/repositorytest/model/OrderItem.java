@@ -1,17 +1,14 @@
 package cl.playground.repositorytest.model;
 
 import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
 import lombok.Data;
-import lombok.NoArgsConstructor;
+
 
 import java.math.BigDecimal;
 
-@Data
 @Entity
 @Table(name = "order_items")
-@NoArgsConstructor
-@AllArgsConstructor
+@Data
 public class OrderItem {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -24,4 +21,14 @@ public class OrderItem {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "order_id")
     private Order order;
+
+    public void setOrder(Order order) {
+        if (this.order != null) {
+            this.order.getItems().remove(this);
+        }
+        this.order = order;
+        if (order != null && !order.getItems().contains(this)) {
+            order.getItems().add(this);
+        }
+    }
 }

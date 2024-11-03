@@ -1,46 +1,60 @@
-# Tutorial: Pruebas de Integración para Repositorios Spring Boot
+# Guía Completa de Testing de Repositorios Spring Boot
 
-Este tutorial explica paso a paso cómo realizar pruebas de integración para la capa de repositorios en Spring Boot, usando PostgreSQL en Docker.
+## Índice
+1. [Configuración del Proyecto](#1-configuración-del-proyecto)
+2. [Modelo de Datos](#2-modelo-de-datos)
+3. [Pruebas de Integración](#3-pruebas-de-integración)
+4. [Ejecución y Verificación](#4-ejecución-y-verificación)
+5. [Mejores Prácticas](#5-mejores-prácticas)
 
-## 1. Configuración Inicial
+## 1. Configuración del Proyecto
 
-### 1.1 Dependencias (pom.xml)
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<project>
-    <!-- ... otras configuraciones ... -->
-    <dependencies>
-        <!-- Spring Data JPA: Proporciona la integración con JPA -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-jpa</artifactId>
-        </dependency>
-
-        <!-- PostgreSQL: Driver para conectar con la base de datos -->
-        <dependency>
-            <groupId>org.postgresql</groupId>
-            <artifactId>postgresql</artifactId>
-            <scope>runtime</scope>
-        </dependency>
-
-        <!-- Lombok: Reduce el código repetitivo -->
-        <dependency>
-            <groupId>org.projectlombok</groupId>
-            <artifactId>lombok</artifactId>
-            <scope>provided</scope>
-        </dependency>
-
-        <!-- Testing -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-    </dependencies>
-</project>
+### 1.1. Estructura de Archivos
+```plaintext
+src/
+├── main/
+│   ├── java/
+│   │   └── cl/playground/repositorytest/
+│   │       ├── model/
+│   │       │   ├── Customer.java
+│   │       │   ├── Order.java
+│   │       │   └── OrderItem.java
+│   │       └── repository/
+│   │           └── OrderRepository.java
+│   └── resources/
+│       └── application.properties
+└── test/
+    └── java/
+        └── cl/playground/repositorytest/repository/
+            └── OrderRepositoryTest.java
 ```
 
-### 1.2 Base de Datos (docker-compose.yml)
+### 1.2. Dependencias (pom.xml)
+```xml
+<dependencies>
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-data-jpa</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>org.postgresql</groupId>
+        <artifactId>postgresql</artifactId>
+        <scope>runtime</scope>
+    </dependency>
+    <dependency>
+        <groupId>org.projectlombok</groupId>
+        <artifactId>lombok</artifactId>
+        <scope>provided</scope>
+    </dependency>
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-test</artifactId>
+        <scope>test</scope>
+    </dependency>
+</dependencies>
+```
+
+### 1.3. Docker Compose (docker-compose.yml)
 ```yaml
 version: '3.8'
 services:
@@ -59,7 +73,7 @@ volumes:
   postgres_data:
 ```
 
-### 1.3 Configuración de Spring (application.properties)
+### 1.4. Configuración de Base de Datos (application.properties)
 ```properties
 spring.datasource.url=jdbc:postgresql://localhost:5432/schooldb
 spring.datasource.username=postgres
@@ -71,7 +85,9 @@ spring.jpa.properties.hibernate.format_sql=true
 
 ## 2. Modelo de Datos
 
-### 2.1 Customer.java
+### 2.1. Entidades JPA
+
+#### Customer.java
 ```java
 @Data
 @Entity
@@ -82,7 +98,6 @@ public class Customer {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
-    
     private String name;
     private String email;
     
@@ -90,11 +105,8 @@ public class Customer {
     private List<Order> orders = new ArrayList<>();
 }
 ```
-- `@Entity`: Marca la clase como una entidad JPA
-- `@Table`: Especifica el nombre de la tabla en la BD
-- `@OneToMany`: Define la relación uno a muchos con Order
 
-### 2.2 Order.java
+#### Order.java
 ```java
 @Data
 @Entity
@@ -105,232 +117,133 @@ public class Order {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
-    
+
     @Column(name = "order_date")
     private LocalDateTime orderDate;
-    
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "customer_id")
     private Customer customer;
-    
-    @OneToMany(mappedBy = "order", cascade = CascadeType.ALL)
+
+    @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<OrderItem> items = new ArrayList<>();
+
+    public void addItem(OrderItem item) {
+        items.add(item);
+        item.setOrder(this);
+    }
+
+    public void removeItem(OrderItem item) {
+        items.remove(item);
+        item.setOrder(null);
+    }
 }
 ```
-- `@ManyToOne`: Define la relación muchos a uno con Customer
-- `fetch = FetchType.LAZY`: Optimización de rendimiento, carga bajo demanda
-- `cascade = CascadeType.ALL`: Propaga operaciones a los items
 
-### 2.3 OrderItem.java
+#### OrderItem.java
 ```java
-@Data
 @Entity
 @Table(name = "order_items")
-@NoArgsConstructor
-@AllArgsConstructor
+@Data
 public class OrderItem {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
-    
     private String productName;
     private BigDecimal price;
     private Integer quantity;
-    
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "order_id")
     private Order order;
-}
-```
 
-## 3. Repositorio
-
-```java
-@Repository
-public interface OrderRepository extends JpaRepository<Order, Long> {
-    
-    @Query("SELECT o FROM Order o " +
-           "LEFT JOIN FETCH o.customer " +
-           "LEFT JOIN FETCH o.items " +
-           "WHERE o.orderDate >= :startDate")
-    List<Order> findOrdersWithDetailsAfterDate(@Param("startDate") LocalDateTime startDate);
-
-    @Query("SELECT DISTINCT o FROM Order o " +
-           "JOIN FETCH o.customer c " +
-           "JOIN FETCH o.items i " +
-           "WHERE c.email = :email " +
-           "AND i.price > :minPrice")
-    List<Order> findCustomerOrdersWithExpensiveItems(
-            @Param("email") String email,
-            @Param("minPrice") BigDecimal minPrice);
-}
-```
-
-**Explicación de las queries:**
-1. `findOrdersWithDetailsAfterDate`:
-    - Usa LEFT JOIN FETCH para traer datos relacionados
-    - Evita el problema N+1 queries
-    - Filtra por fecha
-
-2. `findCustomerOrdersWithExpensiveItems`:
-    - Usa JOIN FETCH para datos relacionados
-    - DISTINCT evita duplicados
-    - Filtra por email y precio
-
-## 4. Pruebas de Integración
-
-```java
-@SpringBootTest              // Carga el contexto completo de Spring
-@Transactional              // Hace rollback después de cada test
-class OrderRepositoryTest {
-
-    @Autowired
-    private OrderRepository orderRepository;
-
-    @Autowired
-    private EntityManager entityManager;  // Para control fino de persistencia
-
-    @BeforeEach
-    void setup() {
-        // Limpiar datos anteriores
-        orderRepository.deleteAll();
-
-        // Preparar datos de prueba
-        Customer customer = new Customer();
-        customer.setName("John Doe");
-        customer.setEmail("john@example.com");
-        entityManager.persist(customer);
-
-        Order order = new Order();
-        order.setOrderDate(LocalDateTime.now());
-        order.setCustomer(customer);
-
-        OrderItem item1 = new OrderItem();
-        item1.setProductName("Laptop");
-        item1.setPrice(new BigDecimal("1200.00"));
-        item1.setQuantity(1);
-        item1.setOrder(order);
-
-        OrderItem item2 = new OrderItem();
-        item2.setProductName("Mouse");
-        item2.setPrice(new BigDecimal("20.00"));
-        item2.setQuantity(1);
-        item2.setOrder(order);
-
-        order.getItems().add(item1);
-        order.getItems().add(item2);
-
-        orderRepository.save(order);
-
-        // Flush para asegurar que los datos están en la BD
-        entityManager.flush();
-        // Clear para limpiar el contexto de persistencia
-        entityManager.clear();
-    }
-
-    @Test
-    void shouldFindOrdersWithDetailsAfterDate() {
-        // Given
-        LocalDateTime yesterday = LocalDateTime.now().minusDays(1);
-
-        // When
-        List<Order> orders = orderRepository.findOrdersWithDetailsAfterDate(yesterday);
-
-        // Then
-        assertFalse(orders.isEmpty());
-        Order order = orders.get(0);
-
-        // Verificar que los datos relacionados están cargados
-        assertNotNull(order.getCustomer());
-        assertFalse(order.getItems().isEmpty());
-        assertEquals(2, order.getItems().size());
-
-        // Verificar los detalles
-        assertEquals("John Doe", order.getCustomer().getName());
-        assertTrue(order.getItems().stream()
-                .anyMatch(item -> item.getProductName().equals("Laptop")));
-    }
-
-    @Test
-    void shouldHandleCustomerWithNoExpensiveItems() {
-        // Given
-        BigDecimal veryHighPrice = new BigDecimal("9999999.00");
-
-        // When
-        List<Order> orders = orderRepository.findCustomerOrdersWithExpensiveItems(
-                "john@example.com", veryHighPrice);
-
-        // Then
-        assertTrue(orders.isEmpty());
+    public void setOrder(Order order) {
+        if (this.order != null) {
+            this.order.getItems().remove(this);
+        }
+        this.order = order;
+        if (order != null && !order.getItems().contains(this)) {
+            order.getItems().add(this);
+        }
     }
 }
 ```
 
-## 5. Ejecución y Verificación
+### 2.2. Configuraciones Importantes
+- Relaciones bidireccionales
+- Lazy loading
+- Cascade operations
+- Orphan removal
 
-### 5.1 Iniciar la Base de Datos
+## 3. Pruebas de Integración
+
+### 3.1. Tests de Consultas Personalizadas
+- `shouldFindOrdersWithDetailsAfterDate`
+- `shouldFindCustomerOrdersWithExpensiveItems`
+
+### 3.2. Tests de Casos Límite
+- `shouldReturnEmptyListWhenNoOrdersMatchCriteria`
+- `shouldHandleCustomerWithNoExpensiveItems`
+
+### 3.3. Tests de Performance
+- `shouldNotGenerateNPlusOneQueries`
+
+### 3.4. Tests CRUD
+- `shouldCreateOrderSuccessfully`
+- `shouldReadOrderSuccessfully`
+- `shouldUpdateOrderSuccessfully`
+- `shouldDeleteOrderSuccessfully`
+
+### 3.5. Tests de Gestión de Items
+- `shouldUpdateOrderItemSuccessfully`
+- `shouldAddItemToExistingOrder`
+- `shouldRemoveItemFromExistingOrder`
+
+### 3.6. Tests de Conteo
+- `shouldCountOrdersCorrectly`
+
+### 3.7. Test de Documentación
+- `documentTestStructure`
+
+## 4. Ejecución y Verificación
+
+### 4.1. Comandos Básicos
 ```bash
 # Iniciar PostgreSQL
 docker-compose up -d
 
-# Verificar que está corriendo
+# Verificar contenedor
 docker-compose ps
-```
 
-### 5.2 Ejecutar Pruebas
-```bash
-# Ejecutar todas las pruebas
+# Ejecutar tests
 ./mvnw test
-
-# Ejecutar una clase específica
-./mvnw test -Dtest=OrderRepositoryTest
 ```
 
-### 5.3 Verificar Resultados
+### 4.2. Verificación de Resultados
+1. Consola de Tests
+2. Logs SQL
+3. Base de Datos
 
-1. **Consola de Tests**: Muestra resultados de las pruebas
+## 5. Mejores Prácticas
 
-2. **Logs SQL**: Con `spring.jpa.show-sql=true` podemos ver:
-    - Queries generadas
-    - Orden de ejecución
-    - Problemas de rendimiento
+### 5.1. Gestión de Datos
+- Limpieza entre tests
+- Estado inicial conocido
+- Transaccionalidad
 
-3. **Verificaciones Importantes**:
-    - Los tests pasan (verde)
-    - Las queries SQL son eficientes
-    - No hay problemas N+1
-    - Las relaciones se cargan correctamente
+### 5.2. Performance
+- Uso de EntityManager
+- Prevención N+1 queries
+- Lazy loading
 
-### 5.4 Herramientas Útiles
+### 5.3. Estructura de Tests
+- Patrón Given-When-Then
+- Nombres descriptivos
+- Verificaciones completas
 
-1. **PgAdmin o DBeaver**:
-    - Conectar a localhost:5432
-    - Examinar las tablas creadas
-    - Verificar datos de prueba
+### 5.4. Mantenibilidad
+- Código documentado
+- Tests independientes
+- Reutilización de código
 
-2. **Logs de Spring**:
-    - Ver queries SQL
-    - Detectar problemas de rendimiento
-
-## Resumen
-
-1. **¿Por qué EntityManager?**
-    - Control preciso de la persistencia
-    - Forzar sincronización con la BD
-    - Limpiar caché de primer nivel
-
-2. **¿Por qué @Transactional?**
-    - Rollback automático después de cada test
-    - Consistencia entre pruebas
-    - Aislamiento de pruebas
-
-3. **¿Por qué JOIN FETCH?**
-    - Evitar problema N+1 queries
-    - Mejorar rendimiento
-    - Cargar relaciones eficientemente
-
-4. **¿Por qué estos tests?**
-    - Prueban funcionalidad real
-    - Verifican mapeo JPA
-    - Validan queries SQL
-    - Comprueban relaciones
+[Documentación detallada de cada test disponible en el documento original]
